@@ -22,30 +22,65 @@ td.n{color:#789;width:28px}.chip{display:inline-block;min-width:78px;text-align:
 </style></head><body>
 <header><h1>Cheese Book</h1><small id="ver"></small><small id="sync" style="margin-left:auto"></small></header>
 <main><nav id="nav"></nav><section id="app"></section></main>
+<script src="config.js"></script>
 <script>
-const VERSION="2.0.0",D={};
+const VERSION="2.1.0",D={};
 document.getElementById('ver').textContent='v'+VERSION;
 /* Storage: every file the app keeps is a path in FS (recipes/X.json, notes/X.json, makes/<date> X.json/.html, run.json).
    Writes go to the local cache at once and to Drive in the background (queue Q). SimDrive stands in for Drive until sign-in is added. */
-const CFG={clientId:''};
+const CFG=window.CHEESE_CFG||{clientId:''};
 const dev=(location.hash.match(/dev=(\w+)/)||[])[1]||'main';
 const SimDrive={async _w(){if(localStorage.getItem('sim:offline'))throw new Error('offline');await new Promise(r=>setTimeout(r,20))},
  async list(){await this._w();return Object.keys(localStorage).filter(k=>k.startsWith('sim:f:')).map(k=>({path:k.slice(6),modified:JSON.parse(localStorage[k]).m}))},
  async get(p){await this._w();return JSON.parse(localStorage.getItem('sim:f:'+p)).t},
  async put(p,t){await this._w();const m=Date.now();localStorage.setItem('sim:f:'+p,JSON.stringify({t,m}));return m},
  async del(p){await this._w();localStorage.removeItem('sim:f:'+p)}};
-const Drive=SimDrive;
+const GoogleDrive=(()=>{const SC='https://www.googleapis.com/auth/drive.file',API='https://www.googleapis.com/drive/v3',UP='https://www.googleapis.com/upload/drive/v3',ROOT='Cheese Book',SUB=['recipes','notes','makes'];
+ let tok=null,exp=0,tc=null,ids=null,pend=null,ready=null,fid={};
+ try{const s=JSON.parse(localStorage.getItem('cb:tok'));if(s&&s.e>Date.now()+60000){tok=s.t;exp=s.e}}catch(e){}
+ const err=(code,m,status)=>Object.assign(new Error(m),{code,status});
+ const load=()=>ready||(ready=new Promise((res,rej)=>{const s=document.createElement('script');s.src='https://accounts.google.com/gsi/client';s.onerror=()=>{ready=null;rej(err('net','Google sign-in script did not load'))};
+  s.onload=()=>{tc=google.accounts.oauth2.initTokenClient({client_id:CFG.clientId,scope:SC,
+   callback:r=>{if(!pend)return;if(r.error)pend.rej(err('auth',r.error));else{tok=r.access_token;exp=Date.now()+(r.expires_in-60)*1000;try{localStorage.setItem('cb:tok',JSON.stringify({t:tok,e:exp}))}catch(e){}pend.res(tok)}},
+   error_callback:e=>{if(pend)pend.rej(err('auth',(e&&e.type)||'sign-in failed'))}});res()};document.head.appendChild(s)}));
+ function token(){if(tok&&Date.now()<exp)return Promise.resolve(tok);if(pend)return pend.p;if(!tc)return load().then(()=>token());
+  const o={};o.p=new Promise((res,rej)=>{o.res=res;o.rej=rej});pend=o;o.p.then(()=>{pend=null},()=>{pend=null});tc.requestAccessToken({prompt:''});return o.p}
+ async function api(url,opt={}){const go=async t=>{try{return await fetch(url,{...opt,headers:{...(opt.headers||{}),Authorization:'Bearer '+t},cache:'no-store'})}catch(e){throw err('net',e.message)}};
+  let r=await go(await token());if(r.status===401){tok=null;try{localStorage.removeItem('cb:tok')}catch(e){}r=await go(await token())}
+  if(!r.ok)throw err(r.status===401||r.status===403?'auth':'http','Drive '+r.status+' '+(await r.text()).slice(0,200),r.status);return r}
+ const jq=u=>api(u).then(r=>r.json()),enc=encodeURIComponent;
+ async function mk(name,parent){const r=await api(API+'/files?fields=id',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,mimeType:'application/vnd.google-apps.folder',...(parent?{parents:[parent]}:{})})});return (await r.json()).id}
+ async function folders(){if(ids)return ids;const F="mimeType='application/vnd.google-apps.folder'";
+  const r=await jq(`${API}/files?q=${enc("name='"+ROOT+"' and "+F+" and trashed=false")}&fields=files(id,createdTime)&orderBy=createdTime&pageSize=10`);
+  const root=r.files[0]?r.files[0].id:await mk(ROOT,null),m={'':root};
+  const L=await jq(`${API}/files?q=${enc("'"+root+"' in parents and "+F+" and trashed=false")}&fields=files(id,name)&pageSize=100`);
+  for(const s of SUB){const f=L.files.find(x=>x.name===s);m[s]=f?f.id:await mk(s,root)}return ids=m}
+ const split=p=>{const i=p.lastIndexOf('/');return[i<0?'':p.slice(0,i),p.slice(i+1)]};
+ return{async init(){try{await load()}catch(e){}},
+  warm(){if(!(tok&&Date.now()<exp)&&tc)token().catch(()=>{})},
+  async signIn(){await load();return token()},
+  async list(){const m=await folders(),inv={};Object.entries(m).forEach(([k,v])=>inv[v]=k);const cond=Object.values(m).map(i=>`'${i}' in parents`).join(' or '),cur={};let pt='';
+   do{const r=await jq(`${API}/files?q=${enc('('+cond+") and trashed=false and mimeType!='application/vnd.google-apps.folder'")}&fields=nextPageToken,files(id,name,modifiedTime,parents)&pageSize=1000${pt?'&pageToken='+pt:''}`);
+    for(const f of r.files){const d=inv[f.parents&&f.parents[0]];if(d===undefined)continue;const p=d?d+'/'+f.name:f.name,mt=Date.parse(f.modifiedTime);if(!cur[p]||mt>=cur[p].m)cur[p]={id:f.id,m:mt}}pt=r.nextPageToken||''}while(pt);
+   fid={};Object.entries(cur).forEach(([p,x])=>fid[p]=x.id);return Object.entries(cur).map(([p,x])=>({path:p,modified:x.m}))},
+  async get(p){if(!fid[p])throw err('http','no such file '+p,404);return (await api(`${API}/files/${fid[p]}?alt=media`)).text()},
+  async put(p,t,retry){const m=await folders(),[dir,name]=split(p),mime=p.endsWith('.json')?'application/json':'text/html';
+   if(fid[p]){try{const r=await api(`${UP}/files/${fid[p]}?uploadType=media&fields=modifiedTime`,{method:'PATCH',headers:{'Content-Type':mime+'; charset=UTF-8'},body:t});return Date.parse((await r.json()).modifiedTime)}catch(e){if(e.status===404&&!retry){delete fid[p];return this.put(p,t,1)}throw e}}
+   const b='cb'+Math.random().toString(36).slice(2),body=`--${b}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify({name,parents:[m[dir]]})}\r\n--${b}\r\nContent-Type: ${mime}; charset=UTF-8\r\n\r\n${t}\r\n--${b}--`;
+   const r=await api(`${UP}/files?uploadType=multipart&fields=id,modifiedTime`,{method:'POST',headers:{'Content-Type':'multipart/related; boundary='+b},body}),j=await r.json();fid[p]=j.id;return Date.parse(j.modifiedTime)},
+  async del(p){if(!fid[p])return;try{await api(`${API}/files/${fid[p]}`,{method:'DELETE'})}catch(e){if(e.status!==404)throw e}delete fid[p]}}})();
+const Drive=CFG.clientId?GoogleDrive:SimDrive;
 const FS={},Q=[];let busy=false,stat='loading';
 try{const c=JSON.parse(localStorage.getItem('cb:c:'+dev));if(c){Object.assign(FS,c.F);Q.push(...c.Q)}}catch(e){}
 const persist=()=>{try{localStorage.setItem('cb:c:'+dev,JSON.stringify({F:FS,Q}))}catch(e){}};
-const setStat=s=>{stat=s;const e=document.getElementById('sync');if(e)e.textContent=({synced:'\u25CF Synced',loading:'Loading from Drive\u2026',saving:'Saving\u2026',offline:'\u25CB Offline, '+Q.length+' waiting to save'})[s]||s};
+const setStat=s=>{stat=s;const e=document.getElementById('sync');if(e)e.textContent=({synced:'\u25CF Synced'+(Drive===SimDrive?' (test mode, not Drive)':''),signin:'\u25CB Tap here to sign in to Google Drive',loading:'Loading from Drive\u2026',saving:'Saving\u2026',offline:'\u25CB Offline, '+Q.length+' waiting to save'})[s]||s};
 const isJ=p=>p.endsWith('.json');
 const Store={get:p=>FS[p]?FS[p].v:undefined,keys:pre=>Object.keys(FS).filter(k=>k.startsWith(pre)),
  put(p,v){FS[p]={v,m:Date.now()};const i=Q.findIndex(q=>q.p===p);if(i>=0)Q.splice(i,1);Q.push({p,op:'put'});persist();flush()},
  del(p){delete FS[p];const i=Q.findIndex(q=>q.p===p);if(i>=0)Q.splice(i,1);Q.push({p,op:'del'});persist();flush()}};
-async function flush(){if(busy)return;busy=true;try{while(Q.length){setStat('saving');const q=Q[0];if(q.op==='put'){const m=await Drive.put(q.p,isJ(q.p)?JSON.stringify(FS[q.p].v):FS[q.p].v);if(FS[q.p])FS[q.p].m=m}else await Drive.del(q.p);Q.shift();persist()}setStat('synced')}catch(e){setStat('offline')}busy=false}
+async function flush(){if(busy)return;busy=true;if(Drive.warm)Drive.warm();try{while(Q.length){setStat('saving');const q=Q[0];if(q.op==='put'){const m=await Drive.put(q.p,isJ(q.p)?JSON.stringify(FS[q.p].v):FS[q.p].v);if(FS[q.p])FS[q.p].m=m}else await Drive.del(q.p);Q.shift();persist()}setStat('synced')}catch(e){setStat(e&&e.code==='auth'?'signin':'offline')}busy=false}
 async function pull(){try{const L=await Drive.list(),seen={};let ch=false;for(const f of L){seen[f.path]=1;if(Q.some(q=>q.p===f.path))continue;const c=FS[f.path];if(!c||c.m<f.modified){const t=await Drive.get(f.path);FS[f.path]={v:isJ(f.path)?JSON.parse(t):t,m:f.modified};ch=true}}
- for(const p of Object.keys(FS))if(!seen[p]&&!Q.some(q=>q.p===p)){delete FS[p];ch=true}persist();return ch}catch(e){setStat('offline');return false}}
+ for(const p of Object.keys(FS))if(!seen[p]&&!Q.some(q=>q.p===p)){delete FS[p];ch=true}persist();if(stat!=='saving')setStat('synced');return ch}catch(e){setStat(e&&e.code==='auth'?'signin':'offline');return false}}
 const $=s=>document.querySelector(s),names=[];let cur=localStorage.getItem('cb:cur')||'';
 const pad=n=>String(n).padStart(2,'0'),tf=t=>{const d=new Date(t);return d.toLocaleDateString('en-GB',{weekday:'short'})+' '+pad(d.getHours())+':'+pad(d.getMinutes())};
 const df=t=>new Date(t).toLocaleDateString('en-GB',{weekday:'short',day:'numeric',month:'short',year:'numeric'});
@@ -107,7 +142,7 @@ function render(){if(!names.length)return renderEmpty();if(run&&run.cheese===cur
   if(er.length){const e=g('err');e.style.display='block';e.innerHTML=er.map(esc).join('<br>');e.scrollIntoView();return}
   D[n]=cl(d);Store.put('recipes/'+n+'.json',D[n]);delete s.draft;render()}}
 document.addEventListener('click',e=>{const t=e.target,k=t.dataset&&t.dataset.k;if(k&&D[k]){cur=k;localStorage.setItem('cb:cur',k);return render()}
- const s=pl(cur);if(t.classList.contains('chip')){const x=D[cur].steps[+t.dataset.i],o=['H','C','F'];x.a=o[(o.indexOf(x.a)+1)%3];Store.put('recipes/'+cur+'.json',D[cur]);return render()}
+ if(!D[cur])return;const s=pl(cur);if(t.classList.contains('chip')){const x=D[cur].steps[+t.dataset.i],o=['H','C','F'];x.a=o[(o.indexOf(x.a)+1)%3];Store.put('recipes/'+cur+'.json',D[cur]);return render()}
  const a=t.dataset&&t.dataset.act;if(!a||!s.draft)return;const d=s.draft,i=+t.dataset.i,st=d.steps;
  if(a==='add'){st.splice(i+1,0,{t:'',m:null,temp:null,ph:null,a:'H',par:false});if(i<d.act)d.act++}
  else if(a==='del'){st.splice(i,1);if(i<d.act)d.act--}else if(a==='up'&&i>0)[st[i-1],st[i]]=[st[i],st[i-1]];else if(a==='down'&&i<st.length-1)[st[i+1],st[i]]=[st[i],st[i+1]];
@@ -168,9 +203,11 @@ let rr=0;setInterval(()=>{if(!run||run.pausedAt)return;const S=lsched(),k=S.cur;
 const hist=n=>Store.keys('makes/').filter(p=>p.endsWith('.json')).map(p=>Store.get(p)).filter(h=>h&&h.cheese===n).sort((a,b)=>b.start-a.start);
 const makeName=h=>{const d=new Date(h.start),b=d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())+' '+h.cheese;let n=b,i=2;while(FS['makes/'+n+'.json'])n=b+' '+i++;return n};
 function rebuild(){const o=Store.keys('recipes/').map(p=>Store.get(p)).filter(r=>r&&r.steps).sort((a,b)=>(a.ord??99)-(b.ord??99)||a.name.localeCompare(b.name));Object.keys(D).forEach(k=>delete D[k]);names.length=0;o.forEach(r=>{D[r.name]=r;names.push(r.name)});if(!D[cur])cur=names[0]||'';run=Store.get('run.json')||null;if(run)cur=run.cheese}
-function renderEmpty(){$('#nav').innerHTML='';$('#app').innerHTML=stat==='loading'?'<h2>Loading from Drive\u2026</h2>':'<h2>No recipes yet</h2><div class="box"><p>Your Drive folder has no recipes. Choose the starter file <b>cheese-seed.json</b> to add them.</p><input type="file" id="seedf" accept=".json"></div>';const s=document.getElementById('seedf');if(s)s.onchange=e=>e.target.files[0]&&importSeed(e.target.files[0])}
+function renderEmpty(){$('#nav').innerHTML='';$('#app').innerHTML=stat==='loading'?'<h2>Loading from Drive\u2026</h2>':stat==='signin'?'<h2>Sign in to Google Drive</h2><div class="box"><p>Your recipes are in your Drive folder. Sign in to load them.</p><button class="b" id="si">Sign in with Google</button></div>':stat==='offline'?'<h2>Can\u2019t reach Drive</h2><div class="box"><p>There is no saved copy on this device yet. Check the connection and reload.</p></div>':'<h2>No recipes yet</h2><div class="box"><p>Your Drive folder has no recipes. Choose the starter file <b>cheese-seed.json</b> to add them.</p><input type="file" id="seedf" accept=".json"></div>';const s=document.getElementById('seedf');if(s)s.onchange=e=>e.target.files[0]&&importSeed(e.target.files[0])}
 async function importSeed(file){try{const j=JSON.parse(await file.text());Object.keys(j).forEach((k,i)=>{const r=cl(j[k]);r.name=k;r.ord=i;r.schema=1;Store.put('recipes/'+k+'.json',r)});rebuild();render()}catch(e){alert('That file could not be read as a recipe file.')}}
-async function boot(){rebuild();render();setStat('loading');const ch=await pull();if(ch)rebuild();if(run)wake();await flush();if(stat==='loading')setStat('synced');render()}
+async function syncNow(){const ch=await pull();if(ch)rebuild();if(run)wake();if(stat!=='signin'&&stat!=='offline')await flush();render()}
+async function boot(){rebuild();render();setStat('loading');if(Drive.init)Drive.init();await syncNow()}
+document.addEventListener('click',e=>{if((e.target.id==='sync'||e.target.id==='si')&&stat==='signin'&&Drive.signIn)Drive.signIn().then(syncNow).catch(()=>setStat('signin'))});
 addEventListener('online',()=>flush());
 document.addEventListener('visibilitychange',async()=>{if(document.visibilityState==='visible'&&!Q.length&&await pull()){rebuild();if(!(P[cur]&&P[cur].draft))render()}});
 setInterval(async()=>{if(Q.length)return flush();if(await pull()){rebuild();if(!/INPUT|TEXTAREA/.test(document.activeElement.tagName)&&!(P[cur]&&P[cur].draft))render()}},60000);

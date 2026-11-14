@@ -24,7 +24,7 @@ td.n{color:#789;width:28px}.chip{display:inline-block;min-width:78px;text-align:
 <main><nav id="nav"></nav><section id="app"></section></main>
 <script src="config.js"></script>
 <script>
-const VERSION="2.1.0",D={};
+const VERSION="2.1.1",D={};
 document.getElementById('ver').textContent='v'+VERSION;
 /* Storage: every file the app keeps is a path in FS (recipes/X.json, notes/X.json, makes/<date> X.json/.html, run.json).
    Writes go to the local cache at once and to Drive in the background (queue Q). SimDrive stands in for Drive until sign-in is added. */
@@ -50,19 +50,23 @@ const GoogleDrive=(()=>{const SC='https://www.googleapis.com/auth/drive.file',AP
   if(!r.ok)throw err(r.status===401||r.status===403?'auth':'http','Drive '+r.status+' '+(await r.text()).slice(0,200),r.status);return r}
  const jq=u=>api(u).then(r=>r.json()),enc=encodeURIComponent;
  async function mk(name,parent){const r=await api(API+'/files?fields=id',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,mimeType:'application/vnd.google-apps.folder',...(parent?{parents:[parent]}:{})})});return (await r.json()).id}
- async function folders(){if(ids)return ids;const F="mimeType='application/vnd.google-apps.folder'";
+ let fp=null,dg=null;
+ function folders(){if(ids)return Promise.resolve(ids);return fp||(fp=(async()=>{const F="mimeType='application/vnd.google-apps.folder'";
   const r=await jq(`${API}/files?q=${enc("name='"+ROOT+"' and "+F+" and trashed=false")}&fields=files(id,createdTime)&orderBy=createdTime&pageSize=10`);
-  const root=r.files[0]?r.files[0].id:await mk(ROOT,null),m={'':root};
-  const L=await jq(`${API}/files?q=${enc("'"+root+"' in parents and "+F+" and trashed=false")}&fields=files(id,name)&pageSize=100`);
-  for(const s of SUB){const f=L.files.find(x=>x.name===s);m[s]=f?f.id:await mk(s,root)}return ids=m}
+  const roots=r.files.map(f=>f.id),root=roots[0]||await mk(ROOT,null),m={'':root},all={},nm={};(roots.length?roots:[root]).forEach(i=>{all[i]='';nm[i]=ROOT});
+  const cond=(roots.length?roots:[root]).map(i=>`'${i}' in parents`).join(' or ');
+  const L=await jq(`${API}/files?q=${enc('('+cond+') and '+F+' and trashed=false')}&fields=files(id,name,createdTime)&orderBy=createdTime&pageSize=100`);
+  for(const x of SUB){const hits=L.files.filter(f=>f.name.trim().toLowerCase()===x);const id=hits.length?hits[0].id:await mk(x,root);m[x]=id;all[id]=x;nm[id]=hits.length?hits[0].name:x;hits.forEach(h=>{all[h.id]=x;nm[h.id]=h.name})}
+  m.all=all;m.nm=nm;return ids=m})().finally(()=>{fp=null}))}
  const split=p=>{const i=p.lastIndexOf('/');return[i<0?'':p.slice(0,i),p.slice(i+1)]};
  return{async init(){try{await load()}catch(e){}},
   warm(){if(!(tok&&Date.now()<exp)&&tc)token().catch(()=>{})},
   async signIn(){await load();return token()},
-  async list(){const m=await folders(),inv={};Object.entries(m).forEach(([k,v])=>inv[v]=k);const cond=Object.values(m).map(i=>`'${i}' in parents`).join(' or '),cur={};let pt='';
+  async list(){const m=await folders(),inv=m.all;const cond=Object.keys(inv).map(i=>`'${i}' in parents`).join(' or '),cur={},cnt={};let pt='';
    do{const r=await jq(`${API}/files?q=${enc('('+cond+") and trashed=false and mimeType!='application/vnd.google-apps.folder'")}&fields=nextPageToken,files(id,name,modifiedTime,parents)&pageSize=1000${pt?'&pageToken='+pt:''}`);
-    for(const f of r.files){const d=inv[f.parents&&f.parents[0]];if(d===undefined)continue;const p=d?d+'/'+f.name:f.name,mt=Date.parse(f.modifiedTime);if(!cur[p]||mt>=cur[p].m)cur[p]={id:f.id,m:mt}}pt=r.nextPageToken||''}while(pt);
-   fid={};Object.entries(cur).forEach(([p,x])=>fid[p]=x.id);return Object.entries(cur).map(([p,x])=>({path:p,modified:x.m}))},
+    for(const f of r.files){const d=inv[f.parents&&f.parents[0]];if(d===undefined)continue;const p=d?d+'/'+f.name:f.name,mt=Date.parse(f.modifiedTime);cnt[d||'(root)']=(cnt[d||'(root)']||0)+1;if(!cur[p]||mt>=cur[p].m)cur[p]={id:f.id,m:mt}}pt=r.nextPageToken||''}while(pt);
+   fid={};Object.entries(cur).forEach(([p,x])=>fid[p]=x.id);dg={at:Date.now(),folders:Object.keys(inv).map(i=>(inv[i]||'(root)')+' = "'+m.nm[i]+'" '+i.slice(0,6)+'\u2026'),counts:cnt,files:Object.keys(cur)};return Object.entries(cur).map(([p,x])=>({path:p,modified:x.m}))},
+  diag(){return{dg,signed:!!(tok&&Date.now()<exp),mins:tok?Math.round((exp-Date.now())/6e4):0}},
   async get(p){if(!fid[p])throw err('http','no such file '+p,404);return (await api(`${API}/files/${fid[p]}?alt=media`)).text()},
   async put(p,t,retry){const m=await folders(),[dir,name]=split(p),mime=p.endsWith('.json')?'application/json':'text/html';
    if(fid[p]){try{const r=await api(`${UP}/files/${fid[p]}?uploadType=media&fields=modifiedTime`,{method:'PATCH',headers:{'Content-Type':mime+'; charset=UTF-8'},body:t});return Date.parse((await r.json()).modifiedTime)}catch(e){if(e.status===404&&!retry){delete fid[p];return this.put(p,t,1)}throw e}}
@@ -73,14 +77,24 @@ const Drive=CFG.clientId?GoogleDrive:SimDrive;
 const FS={},Q=[];let busy=false,stat='loading';
 try{const c=JSON.parse(localStorage.getItem('cb:c:'+dev));if(c){Object.assign(FS,c.F);Q.push(...c.Q)}}catch(e){}
 const persist=()=>{try{localStorage.setItem('cb:c:'+dev,JSON.stringify({F:FS,Q}))}catch(e){}};
-const setStat=s=>{stat=s;const e=document.getElementById('sync');if(e)e.textContent=({synced:'\u25CF Synced'+(Drive===SimDrive?' (test mode, not Drive)':''),signin:'\u25CB Tap here to sign in to Google Drive',loading:'Loading from Drive\u2026',saving:'Saving\u2026',offline:'\u25CB Offline, '+Q.length+' waiting to save'})[s]||s};
+const setStat=s=>{stat=s;const e=document.getElementById('sync');if(e)e.textContent=({synced:'\u25CF Synced'+(Drive===SimDrive?' (test mode, not Drive)':''),signin:'\u25CB Tap here to sign in to Google Drive',loading:'Loading from Drive\u2026',saving:'Saving\u2026',offline:'\u25CB Offline, '+Q.length+' waiting to save',warn:'\u25B2 Synced, '+pullErr.length+' file(s) unreadable (tap for details)'})[s]||s;if(e)e.style.cursor='pointer'};
 const isJ=p=>p.endsWith('.json');
 const Store={get:p=>FS[p]?FS[p].v:undefined,keys:pre=>Object.keys(FS).filter(k=>k.startsWith(pre)),
  put(p,v){FS[p]={v,m:Date.now()};const i=Q.findIndex(q=>q.p===p);if(i>=0)Q.splice(i,1);Q.push({p,op:'put'});persist();flush()},
  del(p){delete FS[p];const i=Q.findIndex(q=>q.p===p);if(i>=0)Q.splice(i,1);Q.push({p,op:'del'});persist();flush()}};
 async function flush(){if(busy)return;busy=true;if(Drive.warm)Drive.warm();try{while(Q.length){setStat('saving');const q=Q[0];if(q.op==='put'){const m=await Drive.put(q.p,isJ(q.p)?JSON.stringify(FS[q.p].v):FS[q.p].v);if(FS[q.p])FS[q.p].m=m}else await Drive.del(q.p);Q.shift();persist()}setStat('synced')}catch(e){setStat(e&&e.code==='auth'?'signin':'offline')}busy=false}
-async function pull(){try{const L=await Drive.list(),seen={};let ch=false;for(const f of L){seen[f.path]=1;if(Q.some(q=>q.p===f.path))continue;const c=FS[f.path];if(!c||c.m<f.modified){const t=await Drive.get(f.path);FS[f.path]={v:isJ(f.path)?JSON.parse(t):t,m:f.modified};ch=true}}
- for(const p of Object.keys(FS))if(!seen[p]&&!Q.some(q=>q.p===p)){delete FS[p];ch=true}persist();if(stat!=='saving')setStat('synced');return ch}catch(e){setStat(e&&e.code==='auth'?'signin':'offline');return false}}
+let pullErr=[],pullAt=0;
+async function pull(){try{const L=await Drive.list(),seen={};let ch=false;pullErr=[];
+ for(const f of L){seen[f.path]=1;if(Q.some(q=>q.p===f.path))continue;const c=FS[f.path];if(!c||c.m<f.modified){try{const t=await Drive.get(f.path);FS[f.path]={v:isJ(f.path)?JSON.parse(t):t,m:f.modified};ch=true}catch(e){if(e&&e.code==='auth')throw e;pullErr.push(f.path+': '+(e&&e.message||e))}}}
+ for(const p of Object.keys(FS))if(!seen[p]&&!Q.some(q=>q.p===p)&&Date.now()-(FS[p].m||0)>6e5){delete FS[p];ch=true}persist();pullAt=Date.now();if(stat!=='saving')setStat(pullErr.length?'warn':'synced');return ch}catch(e){setStat(e&&e.code==='auth'?'signin':'offline');return false}}
+function showDiag(){const d=Drive.diag?Drive.diag():{},g=d.dg,mk=Store.keys('makes/').filter(p=>p.endsWith('.json'));
+ const t=['Cheese Book v'+VERSION,'Signed in: '+(Drive===SimDrive?'test mode (no Drive)':d.signed?'yes (token valid for about '+d.mins+' min)':'no / token expired'),'Last Drive refresh: '+(pullAt?new Date(pullAt).toLocaleTimeString('en-GB'):'none yet'),'',
+  'Folders the app reads:',...(g?g.folders.map(x=>'  '+x):['  (not read yet)']),'','Files found in Drive per folder: '+(g?JSON.stringify(g.counts):'-'),
+  'Make files in Drive:',...(g?g.files.filter(p=>p.startsWith('makes/')).map(x=>'  '+x):[]),'','Makes loaded in the app: '+mk.length,...mk.map(x=>'  '+x),'','Waiting to save: '+Q.length,
+  'Files that could not be read: '+(pullErr.length?'':'none'),...pullErr.map(x=>'  '+x)].join('\n');
+ const o=document.createElement('div');o.style.cssText='position:fixed;inset:0;background:rgba(16,36,61,.55);z-index:99;display:flex;align-items:center;justify-content:center;padding:12px';
+ o.innerHTML='<div style="background:#fff;max-width:640px;width:100%;max-height:90vh;overflow:auto;border-radius:8px;padding:14px"><h3 style="margin:0 0 8px">Drive status</h3><pre style="white-space:pre-wrap;font:12px/1.4 ui-monospace,Consolas,monospace;margin:0 0 10px"></pre><button class="b" id="dgc">Close</button> <button class="b o" id="dgy">Copy</button> <button class="b o" id="dgr">Refresh now</button></div>';
+ o.querySelector('pre').textContent=t;document.body.appendChild(o);o.querySelector('#dgc').onclick=()=>o.remove();o.querySelector('#dgy').onclick=()=>{try{navigator.clipboard.writeText(t)}catch(e){}};o.querySelector('#dgr').onclick=async()=>{o.remove();if(await pull()){rebuild();render()}showDiag()}}
 const $=s=>document.querySelector(s),names=[];let cur=localStorage.getItem('cb:cur')||'';
 const pad=n=>String(n).padStart(2,'0'),tf=t=>{const d=new Date(t);return d.toLocaleDateString('en-GB',{weekday:'short'})+' '+pad(d.getHours())+':'+pad(d.getMinutes())};
 const df=t=>new Date(t).toLocaleDateString('en-GB',{weekday:'short',day:'numeric',month:'short',year:'numeric'});
@@ -207,7 +221,7 @@ function renderEmpty(){$('#nav').innerHTML='';$('#app').innerHTML=stat==='loadin
 async function importSeed(file){try{const j=JSON.parse(await file.text());Object.keys(j).forEach((k,i)=>{const r=cl(j[k]);r.name=k;r.ord=i;r.schema=1;Store.put('recipes/'+k+'.json',r)});rebuild();render()}catch(e){alert('That file could not be read as a recipe file.')}}
 async function syncNow(){const ch=await pull();if(ch)rebuild();if(run)wake();if(stat!=='signin'&&stat!=='offline')await flush();render()}
 async function boot(){rebuild();render();setStat('loading');if(Drive.init)Drive.init();await syncNow()}
-document.addEventListener('click',e=>{if((e.target.id==='sync'||e.target.id==='si')&&stat==='signin'&&Drive.signIn)Drive.signIn().then(syncNow).catch(()=>setStat('signin'))});
+document.addEventListener('click',e=>{if((e.target.id==='sync'||e.target.id==='si')&&stat==='signin'&&Drive.signIn)Drive.signIn().then(syncNow).catch(()=>setStat('signin'));else if(e.target.id==='sync')showDiag()});
 addEventListener('online',()=>flush());
 document.addEventListener('visibilitychange',async()=>{if(document.visibilityState==='visible'&&!Q.length&&await pull()){rebuild();if(!(P[cur]&&P[cur].draft))render()}});
 setInterval(async()=>{if(Q.length)return flush();if(await pull()){rebuild();if(!/INPUT|TEXTAREA/.test(document.activeElement.tagName)&&!(P[cur]&&P[cur].draft))render()}},60000);

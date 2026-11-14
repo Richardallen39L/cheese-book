@@ -20,11 +20,11 @@ td.n{color:#789;width:28px}.chip{display:inline-block;min-width:78px;text-align:
 @media(max-width:760px){main{grid-template-columns:1fr}nav{display:flex;overflow:auto;border-right:0;border-bottom:1px solid var(--line)}nav button{width:auto;white-space:nowrap}.cols{grid-template-columns:1fr}}
 @media print{header,nav,.bar,.noprint{display:none}main{display:block}body{background:#fff}section{padding:0}body.pc #tbl,body.pc #sheet{display:none}body.ps #chartbox,body.ps #tbl,body.ps .box{display:none}body.ps #sheet{display:block}}
 </style></head><body>
-<header><h1>Cheese Book</h1><small id="ver"></small><small id="sync" style="margin-left:auto"></small></header>
+<header><h1>Cheese Book</h1><small id="ver"></small><small id="sync" style="margin-left:auto"></small><button id="dgb" style="margin-left:10px;background:#fff;color:#12355b;border:0;border-radius:4px;padding:4px 9px;font:inherit;font-size:12px;cursor:pointer">Drive status</button></header>
 <main><nav id="nav"></nav><section id="app"></section></main>
 <script src="config.js"></script>
 <script>
-const VERSION="2.1.1",D={};
+const VERSION="2.1.2",D={};
 document.getElementById('ver').textContent='v'+VERSION;
 /* Storage: every file the app keeps is a path in FS (recipes/X.json, notes/X.json, makes/<date> X.json/.html, run.json).
    Writes go to the local cache at once and to Drive in the background (queue Q). SimDrive stands in for Drive until sign-in is added. */
@@ -221,7 +221,7 @@ function renderEmpty(){$('#nav').innerHTML='';$('#app').innerHTML=stat==='loadin
 async function importSeed(file){try{const j=JSON.parse(await file.text());Object.keys(j).forEach((k,i)=>{const r=cl(j[k]);r.name=k;r.ord=i;r.schema=1;Store.put('recipes/'+k+'.json',r)});rebuild();render()}catch(e){alert('That file could not be read as a recipe file.')}}
 async function syncNow(){const ch=await pull();if(ch)rebuild();if(run)wake();if(stat!=='signin'&&stat!=='offline')await flush();render()}
 async function boot(){rebuild();render();setStat('loading');if(Drive.init)Drive.init();await syncNow()}
-document.addEventListener('click',e=>{if((e.target.id==='sync'||e.target.id==='si')&&stat==='signin'&&Drive.signIn)Drive.signIn().then(syncNow).catch(()=>setStat('signin'));else if(e.target.id==='sync')showDiag()});
+document.addEventListener('click',e=>{if((e.target.id==='sync'||e.target.id==='si')&&stat==='signin'&&Drive.signIn)Drive.signIn().then(syncNow).catch(()=>setStat('signin'));else if(e.target.id==='sync'||e.target.id==='dgb')showDiag()});
 addEventListener('online',()=>flush());
 document.addEventListener('visibilitychange',async()=>{if(document.visibilityState==='visible'&&!Q.length&&await pull()){rebuild();if(!(P[cur]&&P[cur].draft))render()}});
 setInterval(async()=>{if(Q.length)return flush();if(await pull()){rebuild();if(!/INPUT|TEXTAREA/.test(document.activeElement.tagName)&&!(P[cur]&&P[cur].draft))render()}},60000);

@@ -24,7 +24,7 @@ td.n{color:#789;width:28px}.chip{display:inline-block;min-width:78px;text-align:
 <main><nav id="nav"></nav><section id="app"></section></main>
 <script src="config.js"></script>
 <script>
-const VERSION="2.1.2",D={};
+const VERSION="2.1.3",D={};
 document.getElementById('ver').textContent='v'+VERSION;
 /* Storage: every file the app keeps is a path in FS (recipes/X.json, notes/X.json, makes/<date> X.json/.html, run.json).
    Writes go to the local cache at once and to Drive in the background (queue Q). SimDrive stands in for Drive until sign-in is added. */
@@ -50,7 +50,7 @@ const GoogleDrive=(()=>{const SC='https://www.googleapis.com/auth/drive.file',AP
   if(!r.ok)throw err(r.status===401||r.status===403?'auth':'http','Drive '+r.status+' '+(await r.text()).slice(0,200),r.status);return r}
  const jq=u=>api(u).then(r=>r.json()),enc=encodeURIComponent;
  async function mk(name,parent){const r=await api(API+'/files?fields=id',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({name,mimeType:'application/vnd.google-apps.folder',...(parent?{parents:[parent]}:{})})});return (await r.json()).id}
- let fp=null,dg=null;
+ let fp=null,dg=null;const wlog=[];const note=(m)=>{wlog.push(new Date().toLocaleTimeString('en-GB')+' '+m);if(wlog.length>14)wlog.shift()};
  function folders(){if(ids)return Promise.resolve(ids);return fp||(fp=(async()=>{const F="mimeType='application/vnd.google-apps.folder'";
   const r=await jq(`${API}/files?q=${enc("name='"+ROOT+"' and "+F+" and trashed=false")}&fields=files(id,createdTime)&orderBy=createdTime&pageSize=10`);
   const roots=r.files.map(f=>f.id),root=roots[0]||await mk(ROOT,null),m={'':root},all={},nm={};(roots.length?roots:[root]).forEach(i=>{all[i]='';nm[i]=ROOT});
@@ -66,12 +66,13 @@ const GoogleDrive=(()=>{const SC='https://www.googleapis.com/auth/drive.file',AP
    do{const r=await jq(`${API}/files?q=${enc('('+cond+") and trashed=false and mimeType!='application/vnd.google-apps.folder'")}&fields=nextPageToken,files(id,name,modifiedTime,parents)&pageSize=1000${pt?'&pageToken='+pt:''}`);
     for(const f of r.files){const d=inv[f.parents&&f.parents[0]];if(d===undefined)continue;const p=d?d+'/'+f.name:f.name,mt=Date.parse(f.modifiedTime);cnt[d||'(root)']=(cnt[d||'(root)']||0)+1;if(!cur[p]||mt>=cur[p].m)cur[p]={id:f.id,m:mt}}pt=r.nextPageToken||''}while(pt);
    fid={};Object.entries(cur).forEach(([p,x])=>fid[p]=x.id);dg={at:Date.now(),folders:Object.keys(inv).map(i=>(inv[i]||'(root)')+' = "'+m.nm[i]+'" '+i.slice(0,6)+'\u2026'),counts:cnt,files:Object.keys(cur)};return Object.entries(cur).map(([p,x])=>({path:p,modified:x.m}))},
-  diag(){return{dg,signed:!!(tok&&Date.now()<exp),mins:tok?Math.round((exp-Date.now())/6e4):0}},
+  async audit(){const m=await folders(),out={};for(const tr of['false','true']){const L=[];let pt='';do{const r=await jq(`${API}/files?q=${enc('trashed='+tr)}&fields=nextPageToken,files(id,name,mimeType,parents,createdTime)&pageSize=1000${pt?'&pageToken='+pt:''}`);L.push(...r.files);pt=r.nextPageToken||''}while(pt);out[tr]=L}return{out,all:m.all,wlog}},
+  diag(){return{wlog,dg,signed:!!(tok&&Date.now()<exp),mins:tok?Math.round((exp-Date.now())/6e4):0}},
   async get(p){if(!fid[p])throw err('http','no such file '+p,404);return (await api(`${API}/files/${fid[p]}?alt=media`)).text()},
   async put(p,t,retry){const m=await folders(),[dir,name]=split(p),mime=p.endsWith('.json')?'application/json':'text/html';
-   if(fid[p]){try{const r=await api(`${UP}/files/${fid[p]}?uploadType=media&fields=modifiedTime`,{method:'PATCH',headers:{'Content-Type':mime+'; charset=UTF-8'},body:t});return Date.parse((await r.json()).modifiedTime)}catch(e){if(e.status===404&&!retry){delete fid[p];return this.put(p,t,1)}throw e}}
+   if(fid[p]){try{const r=await api(`${UP}/files/${fid[p]}?uploadType=media&fields=modifiedTime`,{method:'PATCH',headers:{'Content-Type':mime+'; charset=UTF-8'},body:t});const mt=Date.parse((await r.json()).modifiedTime);note('updated '+p+' ('+t.length+' chars)');return mt}catch(e){note('FAILED update '+p+': '+(e.message||e).toString().slice(0,120));if(e.status===404&&!retry){delete fid[p];return this.put(p,t,1)}throw e}}
    const b='cb'+Math.random().toString(36).slice(2),body=`--${b}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify({name,parents:[m[dir]]})}\r\n--${b}\r\nContent-Type: ${mime}; charset=UTF-8\r\n\r\n${t}\r\n--${b}--`;
-   const r=await api(`${UP}/files?uploadType=multipart&fields=id,modifiedTime`,{method:'POST',headers:{'Content-Type':'multipart/related; boundary='+b},body}),j=await r.json();fid[p]=j.id;return Date.parse(j.modifiedTime)},
+   const r=await api(`${UP}/files?uploadType=multipart&fields=id,modifiedTime`,{method:'POST',headers:{'Content-Type':'multipart/related; boundary='+b},body}),j=await r.json();fid[p]=j.id;note('created '+p+' ('+t.length+' chars) id '+String(j.id).slice(0,6)+'\u2026 in folder '+String(m[dir]).slice(0,6)+'\u2026');return Date.parse(j.modifiedTime)},
   async del(p){if(!fid[p])return;try{await api(`${API}/files/${fid[p]}`,{method:'DELETE'})}catch(e){if(e.status!==404)throw e}delete fid[p]}}})();
 const Drive=CFG.clientId?GoogleDrive:SimDrive;
 const FS={},Q=[];let busy=false,stat='loading';
@@ -90,11 +91,12 @@ async function pull(){try{const L=await Drive.list(),seen={};let ch=false;pullEr
 function showDiag(){const d=Drive.diag?Drive.diag():{},g=d.dg,mk=Store.keys('makes/').filter(p=>p.endsWith('.json'));
  const t=['Cheese Book v'+VERSION,'Signed in: '+(Drive===SimDrive?'test mode (no Drive)':d.signed?'yes (token valid for about '+d.mins+' min)':'no / token expired'),'Last Drive refresh: '+(pullAt?new Date(pullAt).toLocaleTimeString('en-GB'):'none yet'),'',
   'Folders the app reads:',...(g?g.folders.map(x=>'  '+x):['  (not read yet)']),'','Files found in Drive per folder: '+(g?JSON.stringify(g.counts):'-'),
-  'Make files in Drive:',...(g?g.files.filter(p=>p.startsWith('makes/')).map(x=>'  '+x):[]),'','Makes loaded in the app: '+mk.length,...mk.map(x=>'  '+x),'','Waiting to save: '+Q.length,
+  'Make files in Drive:',...(g?g.files.filter(p=>p.startsWith('makes/')).map(x=>'  '+x):[]),'','Makes loaded in the app: '+mk.length,...mk.map(x=>'  '+x),'','Waiting to save: '+Q.length,'','Recent uploads this session:',...(d.wlog&&d.wlog.length?d.wlog.map(x=>'  '+x):['  none since the page opened']),
   'Files that could not be read: '+(pullErr.length?'':'none'),...pullErr.map(x=>'  '+x)].join('\n');
  const o=document.createElement('div');o.style.cssText='position:fixed;inset:0;background:rgba(16,36,61,.55);z-index:99;display:flex;align-items:center;justify-content:center;padding:12px';
  o.innerHTML='<div style="background:#fff;max-width:640px;width:100%;max-height:90vh;overflow:auto;border-radius:8px;padding:14px"><h3 style="margin:0 0 8px">Drive status</h3><pre style="white-space:pre-wrap;font:12px/1.4 ui-monospace,Consolas,monospace;margin:0 0 10px"></pre><button class="b" id="dgc">Close</button> <button class="b o" id="dgy">Copy</button> <button class="b o" id="dgr">Refresh now</button></div>';
- o.querySelector('pre').textContent=t;document.body.appendChild(o);o.querySelector('#dgc').onclick=()=>o.remove();o.querySelector('#dgy').onclick=()=>{try{navigator.clipboard.writeText(t)}catch(e){}};o.querySelector('#dgr').onclick=async()=>{o.remove();if(await pull()){rebuild();render()}showDiag()}}
+ const pre=o.querySelector('pre');pre.textContent=t;let full=t;document.body.appendChild(o);
+ if(Drive.audit)Drive.audit().then(({out,all})=>{const nm=id=>id in all?(all[id]||'(root)'):'OTHER '+String(id).slice(0,6)+'\u2026',ln=[];for(const tr of['false','true']){const L=out[tr].filter(f=>f.mimeType!=='application/vnd.google-apps.folder'&&!/^recipes$/.test((f.parents||[]).map(nm)[0]||''));ln.push('','Every non-recipe file the app can see'+(tr==='true'?' IN THE DRIVE BIN':'')+': '+L.length,...L.map(f=>'  '+f.name+'  ['+f.mimeType+']  folder: '+((f.parents||[]).map(nm).join(',')||'none')))}full=t+'\n'+ln.join('\n');pre.textContent=full}).catch(e=>{pre.textContent=t+'\n\n(audit failed: '+(e&&e.message||e)+')'});o.querySelector('#dgc').onclick=()=>o.remove();o.querySelector('#dgy').onclick=()=>{try{navigator.clipboard.writeText(pre.textContent)}catch(e){}};o.querySelector('#dgr').onclick=async()=>{o.remove();if(await pull()){rebuild();render()}showDiag()}}
 const $=s=>document.querySelector(s),names=[];let cur=localStorage.getItem('cb:cur')||'';
 const pad=n=>String(n).padStart(2,'0'),tf=t=>{const d=new Date(t);return d.toLocaleDateString('en-GB',{weekday:'short'})+' '+pad(d.getHours())+':'+pad(d.getMinutes())};
 const df=t=>new Date(t).toLocaleDateString('en-GB',{weekday:'short',day:'numeric',month:'short',year:'numeric'});

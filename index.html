@@ -24,7 +24,7 @@ td.n{color:#789;width:28px}.chip{display:inline-block;min-width:78px;text-align:
 <main><nav id="nav"></nav><section id="app"></section></main>
 <script src="config.js"></script>
 <script>
-const VERSION="2.1.3",D={};
+const VERSION="2.1.4",D={};
 document.getElementById('ver').textContent='v'+VERSION;
 /* Storage: every file the app keeps is a path in FS (recipes/X.json, notes/X.json, makes/<date> X.json/.html, run.json).
    Writes go to the local cache at once and to Drive in the background (queue Q). SimDrive stands in for Drive until sign-in is added. */
@@ -83,7 +83,7 @@ const isJ=p=>p.endsWith('.json');
 const Store={get:p=>FS[p]?FS[p].v:undefined,keys:pre=>Object.keys(FS).filter(k=>k.startsWith(pre)),
  put(p,v){FS[p]={v,m:Date.now()};const i=Q.findIndex(q=>q.p===p);if(i>=0)Q.splice(i,1);Q.push({p,op:'put'});persist();flush()},
  del(p){delete FS[p];const i=Q.findIndex(q=>q.p===p);if(i>=0)Q.splice(i,1);Q.push({p,op:'del'});persist();flush()}};
-async function flush(){if(busy)return;busy=true;if(Drive.warm)Drive.warm();try{while(Q.length){setStat('saving');const q=Q[0];if(q.op==='put'){const m=await Drive.put(q.p,isJ(q.p)?JSON.stringify(FS[q.p].v):FS[q.p].v);if(FS[q.p])FS[q.p].m=m}else await Drive.del(q.p);Q.shift();persist()}setStat('synced')}catch(e){setStat(e&&e.code==='auth'?'signin':'offline')}busy=false}
+async function flush(){if(busy)return;busy=true;if(Drive.warm)Drive.warm();try{while(Q.length){setStat('saving');const q=Q[0];if(q.op==='put'){const e=FS[q.p];if(e){const m=await Drive.put(q.p,isJ(q.p)?JSON.stringify(e.v):e.v);if(FS[q.p]===e)e.m=m}}else await Drive.del(q.p);const i=Q.indexOf(q);if(i>=0)Q.splice(i,1);persist()}setStat('synced')}catch(e){setStat(e&&e.code==='auth'?'signin':'offline')}busy=false}
 let pullErr=[],pullAt=0;
 async function pull(){try{const L=await Drive.list(),seen={};let ch=false;pullErr=[];
  for(const f of L){seen[f.path]=1;if(Q.some(q=>q.p===f.path))continue;const c=FS[f.path];if(!c||c.m<f.modified){try{const t=await Drive.get(f.path);FS[f.path]={v:isJ(f.path)?JSON.parse(t):t,m:f.modified};ch=true}catch(e){if(e&&e.code==='auth')throw e;pullErr.push(f.path+': '+(e&&e.message||e))}}}

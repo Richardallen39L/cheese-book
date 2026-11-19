@@ -25,7 +25,7 @@ main.nc{grid-template-columns:1fr}main.nc nav{display:none}
 <main><nav id="nav"></nav><section id="app"></section></main>
 <script src="config.js"></script>
 <script>
-const VERSION="2.3.0",D={};
+const VERSION="2.4.0",D={};
 document.getElementById('ver').textContent='v'+VERSION;
 /* Storage: every file the app keeps is a path in FS (recipes/X.json, notes/X.json, makes/<date> X.json/.html, run.json).
    Writes go to the local cache at once and to Drive in the background (queue Q). SimDrive stands in for Drive until sign-in is added. */
@@ -137,7 +137,7 @@ function render(){if(!names.length)return renderEmpty();if(run&&run.cheese===cur
  <div class="bar"><label>Plan by<select id="mode">${sel(s.mode,{start:'Start time',end:'Finish time (active work ends)'})}</select></label>
  <label>${s.mode==='start'?'Start':'Active work ends'}<input id="at" type="datetime-local" value="${s.at}"></label>
  <label>Milk (${c.unit})<input id="milk" type="number" step="0.5" min="0.5" value="${s.milk}" style="width:90px"></label>
- <button class="b o noprint" data-lv="logs">Check logs</button><button class="b o noprint" id="pc">Print chart</button><button class="b o noprint" id="ps">Print checksheet</button>${!ed&&!run?'<button class="b noprint" data-lv="go">Start make now</button>':''}${run&&run.cheese===n?'<button class="b noprint" data-lv="live">Back to live make</button>':''}${ed?'<button class="b noprint" id="sv">Save recipe</button><button class="b o noprint" id="cx">Cancel</button>':'<button class="b o noprint" id="ed">Edit recipe</button>'}</div>
+ <button class="b o noprint" data-lv="logs">Check logs</button><button class="b o noprint" id="pc">Print chart</button><button class="b o noprint" id="ps">Print checksheet</button>${!ed&&!run?'<button class="b noprint" data-lv="go">Start make now</button>':''}${run&&run.cheese===n?'<button class="b noprint" data-lv="live">Back to live make</button>':''}${ed?'<button class="b noprint" id="sv">Save recipe</button><button class="b o noprint" id="cx">Cancel</button>':'<button class="b o noprint" id="ed">Edit recipe</button><button class=\"b o noprint\" id=\"dup\">Duplicate</button>'}</div>
  ${lessons(n)}
  <div id="err" class="box" style="display:none;border-color:#c0392b;color:#c0392b"></div>
  <div class="sum"><div>Start<b>${tf(S.start)}</b></div><div>Active work ends<b>${tf(S.actEnd)}</b></div><div>Hands-on time<b>${dur(S.rows.slice(0,S.act).filter(x=>x.att==='H').reduce((a,x)=>a+x.m,0))}</b></div><div>Make ends<b>${tf(S.end)}</b></div><div>Ready<b>${df(S.ready)}</b></div></div>
@@ -153,7 +153,7 @@ function render(){if(!names.length)return renderEmpty();if(run&&run.cheese===cur
  `;
  const g=id=>document.getElementById(id);g('mode').onchange=e=>{s.mode=e.target.value;render()};g('at').onchange=e=>{if(e.target.value){s.at=e.target.value;render()}};g('milk').onchange=e=>{const v=parseFloat(e.target.value);if(v>0){s.milk=v;render()}};
  const pr=k=>{document.body.className=k;window.print();document.body.className=''};g('pc').onclick=()=>pr('pc');g('ps').onclick=()=>pr('ps');g('own').onchange=e=>Store.put('notes/'+n+'.json',{text:e.target.value});
- if(g('ed'))g('ed').onclick=()=>{s.draft=cl(D[n]);render()};if(g('cx'))g('cx').onclick=()=>{delete s.draft;render()};
+ if(g('ed'))g('ed').onclick=()=>{s.draft=cl(D[n]);render()};if(g('dup'))g('dup').onclick=()=>{let nn=n+' (copy)',k=2;while(D[nn])nn=n+' (copy '+(k++)+')';const r=cl(D[n]);r.name=nn;r.ord=(D[n].ord??99)+.5;r.log=[];delete r.draft;Store.put('recipes/'+nn+'.json',r);rebuild();cur=nn;localStorage.setItem('cb:cur',nn);pl(nn).draft=cl(D[nn]);render()};if(g('cx'))g('cx').onclick=()=>{delete s.draft;render()};
  
  if(g('sv'))g('sv').onclick=()=>{const d=s.draft,er=[],o0=d.steps[0]&&d.steps[0].mise?1:0;d.steps.forEach((x,i)=>{if(!String(x.t||'').trim())er.push('Step '+(i+1-o0)+': needs a description.');if(!x.par&&!(Number.isFinite(x.m)&&x.m>=0))er.push('Step '+(i+1-o0)+': needs a time in minutes (or tick alongside).');if(!ATT[x.a])er.push('Step '+(i+1-o0)+': needs an attendance level.')});
   d.ing.forEach((x,i)=>{if(!String(x[2]||'').trim())er.push('Ingredient '+(i+1)+': needs a description.');if(!(Number.isFinite(x[0])&&x[0]>0))er.push('Ingredient '+(i+1)+': needs a quantity.')});

@@ -25,7 +25,7 @@ main.nc{grid-template-columns:1fr}main.nc nav{display:none}
 <main><nav id="nav"></nav><section id="app"></section></main>
 <script src="config.js"></script>
 <script>
-const VERSION="2.4.0",D={};
+const VERSION="2.5.0",D={};
 document.getElementById('ver').textContent='v'+VERSION;
 /* Storage: every file the app keeps is a path in FS (recipes/X.json, notes/X.json, makes/<date> X.json/.html, run.json).
    Writes go to the local cache at once and to Drive in the background (queue Q). SimDrive stands in for Drive until sign-in is added. */
@@ -133,7 +133,7 @@ function render(){if(!names.length)return renderEmpty();if(run&&run.cheese===cur
  :`<tr class="${x.par?'par':''}"><td class="n">${x.n}</td><td>${esc(x.t)}${subs(x)}${meas(x)}</td><td>${x.par?'alongside':tf(x.a).split(' ')[1]}</td><td>${x.m?(x.est?'~':'')+dur(x.m):''}</td><td>${x.temp!=null?x.temp+'°C':''}</td><td>${esc(x.ph||'')}</td><td><span class="chip ${x.att}" data-i="${x.i}" title="Click to change">${ATT[x.att]}</span></td></tr>`;
  let body='';S.rows.forEach(x=>{body+=row(x);if(x.i===S.act-1&&S.act<S.rows.length)body+=`<tr><td colspan="7" style="background:var(--pale)"><b>Long rest, press and later steps</b> <small>(not on the chart)</small></td></tr>`});
  const own=(Store.get('notes/'+n+'.json')||{}).text||'',lg=c.log||[];
- $('#app').innerHTML=`<h2>${n}</h2>
+ $('#app').innerHTML=`<h2>${ed?`<label style="font:inherit">Recipe name <input id="rn" data-nm="1" value="${esc(c.name||n)}" style="width:min(420px,90%);font:inherit"></label>`:esc(n)}</h2>
  <div class="bar"><label>Plan by<select id="mode">${sel(s.mode,{start:'Start time',end:'Finish time (active work ends)'})}</select></label>
  <label>${s.mode==='start'?'Start':'Active work ends'}<input id="at" type="datetime-local" value="${s.at}"></label>
  <label>Milk (${c.unit})<input id="milk" type="number" step="0.5" min="0.5" value="${s.milk}" style="width:90px"></label>
@@ -153,11 +153,17 @@ function render(){if(!names.length)return renderEmpty();if(run&&run.cheese===cur
  `;
  const g=id=>document.getElementById(id);g('mode').onchange=e=>{s.mode=e.target.value;render()};g('at').onchange=e=>{if(e.target.value){s.at=e.target.value;render()}};g('milk').onchange=e=>{const v=parseFloat(e.target.value);if(v>0){s.milk=v;render()}};
  const pr=k=>{document.body.className=k;window.print();document.body.className=''};g('pc').onclick=()=>pr('pc');g('ps').onclick=()=>pr('ps');g('own').onchange=e=>Store.put('notes/'+n+'.json',{text:e.target.value});
- if(g('ed'))g('ed').onclick=()=>{s.draft=cl(D[n]);render()};if(g('dup'))g('dup').onclick=()=>{let nn=n+' (copy)',k=2;while(D[nn])nn=n+' (copy '+(k++)+')';const r=cl(D[n]);r.name=nn;r.ord=(D[n].ord??99)+.5;r.log=[];delete r.draft;Store.put('recipes/'+nn+'.json',r);rebuild();cur=nn;localStorage.setItem('cb:cur',nn);pl(nn).draft=cl(D[nn]);render()};if(g('cx'))g('cx').onclick=()=>{delete s.draft;render()};
+ if(g('ed'))g('ed').onclick=()=>{s.draft=cl(D[n]);render()};if(g('dup'))g('dup').onclick=()=>{let nn=n+' (copy)',k=2;while(D[nn])nn=n+' (copy '+(k++)+')';const r=cl(D[n]);r.name=nn;r.ord=(D[n].ord??99)+.5+names.filter(x=>x.startsWith(n+' (copy')).length/100;r.log=[];delete r.draft;Store.put('recipes/'+nn+'.json',r);rebuild();cur=nn;localStorage.setItem('cb:cur',nn);pl(nn).draft=cl(D[nn]);render()};if(g('cx'))g('cx').onclick=()=>{delete s.draft;render()};
  
  if(g('sv'))g('sv').onclick=()=>{const d=s.draft,er=[],o0=d.steps[0]&&d.steps[0].mise?1:0;d.steps.forEach((x,i)=>{if(!String(x.t||'').trim())er.push('Step '+(i+1-o0)+': needs a description.');if(!x.par&&!(Number.isFinite(x.m)&&x.m>=0))er.push('Step '+(i+1-o0)+': needs a time in minutes (or tick alongside).');if(!ATT[x.a])er.push('Step '+(i+1-o0)+': needs an attendance level.')});
   d.ing.forEach((x,i)=>{if(!String(x[2]||'').trim())er.push('Ingredient '+(i+1)+': needs a description.');if(!(Number.isFinite(x[0])&&x[0]>0))er.push('Ingredient '+(i+1)+': needs a quantity.')});
+  const nn=String(g('rn')?g('rn').value:n).trim();
+  if(nn!==n){if(!nn)er.push('The recipe needs a name.');else if(/[\\/:*?"<>|]/.test(nn))er.push('The name cannot contain any of these characters: \\ / : * ? " < > |');else if(names.some(k=>k!==n&&k.toLowerCase()===nn.toLowerCase()))er.push('There is already a recipe called '+nn+'.');else if(run&&run.cheese===n)er.push('A make of '+n+' is in progress. Finish or discard it before renaming.')}
   if(er.length){const e=g('err');e.style.display='block';e.innerHTML=er.map(esc).join('<br>');e.scrollIntoView();return}
+  if(nn!==n){const old=n,rec=cl(d);rec.name=nn;Store.put('recipes/'+nn+'.json',rec);Store.del('recipes/'+old+'.json');
+   const np='notes/'+old+'.json',nv=Store.get(np);if(nv!==undefined){Store.put('notes/'+nn+'.json',nv);Store.del(np)}
+   Store.keys('makes/').filter(q=>q.endsWith('.json')).forEach(q=>{const h=Store.get(q);if(h&&h.cheese===old){h.cheese=nn;Store.put(q,h)}});
+   const ps=P[old];delete ps.draft;P[nn]=ps;delete P[old];cur=nn;localStorage.setItem('cb:cur',nn);rebuild();return render()}
   D[n]=cl(d);Store.put('recipes/'+n+'.json',D[n]);delete s.draft;render()}}
 document.addEventListener('click',e=>{const t=e.target,k=t.dataset&&t.dataset.k;if(k&&D[k]){cur=k;localStorage.setItem('cb:cur',k);return render()}
  if(!D[cur])return;const s=pl(cur);if(t.classList.contains('chip')){const x=D[cur].steps[+t.dataset.i],o=['H','C','F'];x.a=o[(o.indexOf(x.a)+1)%3];Store.put('recipes/'+cur+'.json',D[cur]);return render()}
@@ -166,6 +172,7 @@ document.addEventListener('click',e=>{const t=e.target,k=t.dataset&&t.dataset.k;
  else if(a==='del'){st.splice(i,1);if(i<d.act)d.act--}else if(a==='up'&&i>0)[st[i-1],st[i]]=[st[i],st[i-1]];else if(a==='down'&&i<st.length-1)[st[i+1],st[i]]=[st[i],st[i+1]];
  else if(a==='iadd')d.ing.push([null,'tsp','']);else if(a==='idel')d.ing.splice(i,1);render()});
 document.addEventListener('change',e=>{const t=e.target,s=P[cur],d=s&&s.draft;if(!d)return;const i=+t.dataset.i;
+ if(t.dataset.nm!==undefined){d.name=t.value;return}
  if(t.dataset.brk!==undefined){d.act=+t.dataset.brk+1;return render()}
  if(t.dataset.ing){const r=d.ing[i];if(t.dataset.ing==='q')r[0]=t.value===''?null:parseFloat(t.value);else if(t.dataset.ing==='u')r[1]=t.value;else r[2]=t.value;return}
  const f=t.dataset.f;if(!f)return;const x=d.steps[i];

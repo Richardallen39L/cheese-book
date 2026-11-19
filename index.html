@@ -21,11 +21,11 @@ main.nc{grid-template-columns:1fr}main.nc nav{display:none}
 @media(max-width:760px){main{grid-template-columns:1fr}nav{display:flex;overflow:auto;border-right:0;border-bottom:1px solid var(--line)}nav button{width:auto;white-space:nowrap}.cols{grid-template-columns:1fr}}
 @media print{header,nav,.bar,.noprint{display:none}main{display:block}body{background:#fff}section{padding:0}body.pc #tbl,body.pc #sheet{display:none}body.ps #chartbox,body.ps #tbl,body.ps .box{display:none}body.ps #sheet{display:block}}
 </style></head><body>
-<header><button id="navb" title="Show or hide the cheese list" aria-label="Show or hide the cheese list" style="background:#fff;color:#12355b;border:0;border-radius:4px;padding:2px 9px;font:inherit;font-size:18px;line-height:1.2;cursor:pointer;align-self:center">&#9776;</button><h1>Cheese Book</h1><small id="ver"></small><small id="sync" style="margin-left:auto"></small><button id="dgb" style="margin-left:10px;background:#fff;color:#12355b;border:0;border-radius:4px;padding:4px 9px;font:inherit;font-size:12px;cursor:pointer">Drive status</button><button id="qb" title="Close Cheese Book" style="margin-left:8px;background:#fff;color:#12355b;border:0;border-radius:4px;padding:4px 9px;font:inherit;font-size:12px;cursor:pointer">Quit</button></header>
+<header><button id="navb" title="Show or hide the cheese list" aria-label="Show or hide the cheese list" style="background:#fff;color:#12355b;border:0;border-radius:4px;padding:2px 9px;font:inherit;font-size:18px;line-height:1.2;cursor:pointer;align-self:center">&#9776;</button><h1>Cheese Book</h1><small id="ver"></small><button id="newb" title="Start a new cheese recipe" style="margin-left:14px;background:#fff;color:#12355b;border:0;border-radius:4px;padding:4px 9px;font:inherit;font-size:12px;cursor:pointer">+ New recipe</button><small id="sync" style="margin-left:auto"></small><button id="dgb" style="margin-left:10px;background:#fff;color:#12355b;border:0;border-radius:4px;padding:4px 9px;font:inherit;font-size:12px;cursor:pointer">Drive status</button><button id="qb" title="Close Cheese Book" style="margin-left:8px;background:#fff;color:#12355b;border:0;border-radius:4px;padding:4px 9px;font:inherit;font-size:12px;cursor:pointer">Quit</button></header>
 <main><nav id="nav"></nav><section id="app"></section></main>
 <script src="config.js"></script>
 <script>
-const VERSION="2.5.0",D={};
+const VERSION="2.6.0",D={};
 document.getElementById('ver').textContent='v'+VERSION;
 /* Storage: every file the app keeps is a path in FS (recipes/X.json, notes/X.json, makes/<date> X.json/.html, run.json).
    Writes go to the local cache at once and to Drive in the background (queue Q). SimDrive stands in for Drive until sign-in is added. */
@@ -153,13 +153,14 @@ function render(){if(!names.length)return renderEmpty();if(run&&run.cheese===cur
  `;
  const g=id=>document.getElementById(id);g('mode').onchange=e=>{s.mode=e.target.value;render()};g('at').onchange=e=>{if(e.target.value){s.at=e.target.value;render()}};g('milk').onchange=e=>{const v=parseFloat(e.target.value);if(v>0){s.milk=v;render()}};
  const pr=k=>{document.body.className=k;window.print();document.body.className=''};g('pc').onclick=()=>pr('pc');g('ps').onclick=()=>pr('ps');g('own').onchange=e=>Store.put('notes/'+n+'.json',{text:e.target.value});
- if(g('ed'))g('ed').onclick=()=>{s.draft=cl(D[n]);render()};if(g('dup'))g('dup').onclick=()=>{let nn=n+' (copy)',k=2;while(D[nn])nn=n+' (copy '+(k++)+')';const r=cl(D[n]);r.name=nn;r.ord=(D[n].ord??99)+.5+names.filter(x=>x.startsWith(n+' (copy')).length/100;r.log=[];delete r.draft;Store.put('recipes/'+nn+'.json',r);rebuild();cur=nn;localStorage.setItem('cb:cur',nn);pl(nn).draft=cl(D[nn]);render()};if(g('cx'))g('cx').onclick=()=>{delete s.draft;render()};
+ if(g('ed'))g('ed').onclick=()=>{s.draft=cl(D[n]);render()};if(g('dup'))g('dup').onclick=()=>{let nn=n+' (copy)',k=2;while(D[nn])nn=n+' (copy '+(k++)+')';const r=cl(D[n]);r.name=nn;r.ord=(D[n].ord??99)+.5+names.filter(x=>x.startsWith(n+' (copy')).length/100;r.log=[];delete r.draft;Store.put('recipes/'+nn+'.json',r);rebuild();cur=nn;localStorage.setItem('cb:cur',nn);pl(nn).draft=cl(D[nn]);render()};if(g('cx'))g('cx').onclick=()=>{delete s.draft;if(D[n]&&D[n].isNew){Store.del('recipes/'+n+'.json');delete P[n];rebuild()}render()};
  
  if(g('sv'))g('sv').onclick=()=>{const d=s.draft,er=[],o0=d.steps[0]&&d.steps[0].mise?1:0;d.steps.forEach((x,i)=>{if(!String(x.t||'').trim())er.push('Step '+(i+1-o0)+': needs a description.');if(!x.par&&!(Number.isFinite(x.m)&&x.m>=0))er.push('Step '+(i+1-o0)+': needs a time in minutes (or tick alongside).');if(!ATT[x.a])er.push('Step '+(i+1-o0)+': needs an attendance level.')});
   d.ing.forEach((x,i)=>{if(!String(x[2]||'').trim())er.push('Ingredient '+(i+1)+': needs a description.');if(!(Number.isFinite(x[0])&&x[0]>0))er.push('Ingredient '+(i+1)+': needs a quantity.')});
   const nn=String(g('rn')?g('rn').value:n).trim();
   if(nn!==n){if(!nn)er.push('The recipe needs a name.');else if(/[\\/:*?"<>|]/.test(nn))er.push('The name cannot contain any of these characters: \\ / : * ? " < > |');else if(names.some(k=>k!==n&&k.toLowerCase()===nn.toLowerCase()))er.push('There is already a recipe called '+nn+'.');else if(run&&run.cheese===n)er.push('A make of '+n+' is in progress. Finish or discard it before renaming.')}
   if(er.length){const e=g('err');e.style.display='block';e.innerHTML=er.map(esc).join('<br>');e.scrollIntoView();return}
+  delete d.isNew;
   if(nn!==n){const old=n,rec=cl(d);rec.name=nn;Store.put('recipes/'+nn+'.json',rec);Store.del('recipes/'+old+'.json');
    const np='notes/'+old+'.json',nv=Store.get(np);if(nv!==undefined){Store.put('notes/'+nn+'.json',nv);Store.del(np)}
    Store.keys('makes/').filter(q=>q.endsWith('.json')).forEach(q=>{const h=Store.get(q);if(h&&h.cheese===old){h.cheese=nn;Store.put(q,h)}});
@@ -238,6 +239,11 @@ function showLogs(n){const L=logEntries(n),o=document.createElement('div');o.sty
 const makeName=h=>{const d=new Date(h.start),b=d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate())+' '+h.cheese;let n=b,i=2;while(FS['makes/'+n+'.json'])n=b+' '+i++;return n};
 function rebuild(){const o=Store.keys('recipes/').map(p=>Store.get(p)).filter(r=>r&&r.steps).sort((a,b)=>(a.ord??99)-(b.ord??99)||a.name.localeCompare(b.name));Object.keys(D).forEach(k=>delete D[k]);names.length=0;o.forEach(r=>{D[r.name]=r;names.push(r.name)});if(!D[cur])cur=names[0]||'';run=Store.get('run.json')||null;if(run)cur=run.cheese}
 function renderEmpty(){$('#nav').innerHTML='';$('#app').innerHTML=stat==='loading'?'<h2>Loading from Drive\u2026</h2>':stat==='signin'?'<h2>Sign in to Google Drive</h2><div class="box"><p>Your recipes are in your Drive folder. Sign in to load them.</p><button class="b" id="si">Sign in with Google</button></div>':stat==='offline'?'<h2>Can\u2019t reach Drive</h2><div class="box"><p>There is no saved copy on this device yet. Check the connection and reload.</p></div>':'<h2>No recipes yet</h2><div class="box"><p>Your Drive folder has no recipes. Choose the starter file <b>cheese-seed.json</b> to add them.</p><input type="file" id="seedf" accept=".json"></div>';const s=document.getElementById('seedf');if(s)s.onchange=e=>e.target.files[0]&&importSeed(e.target.files[0])}
+function newRecipe(){if(stat==='loading')return;let nn='New cheese',k=2;while(D[nn])nn='New cheese '+(k++);
+ const mx=names.reduce((a,x)=>Math.max(a,D[x].ord??0),0);
+ const r={name:nn,base:8,unit:'litres',milk:8,ing:[[8,'litres','Milk']],steps:[{t:'Mise en place: weigh out all the ingredients and have them ready',m:15,a:'H',mise:true},{t:'',m:30,a:'H'}],act:2,age:[],notes:[],log:[],ord:mx+1,schema:1,isNew:true};
+ Store.put('recipes/'+nn+'.json',r);rebuild();cur=nn;localStorage.setItem('cb:cur',nn);pl(nn).draft=cl(D[nn]);render()}
+$('#newb').onclick=newRecipe;
 async function importSeed(file){try{const j=JSON.parse(await file.text());Object.keys(j).forEach((k,i)=>{const r=cl(j[k]);r.name=k;r.ord=i;r.schema=1;Store.put('recipes/'+k+'.json',r)});rebuild();render()}catch(e){alert('That file could not be read as a recipe file.')}}
 async function syncNow(){const ch=await pull();if(ch)rebuild();if(run)wake();if(stat!=='signin'&&stat!=='offline')await flush();render()}
 async function boot(){rebuild();render();setStat('loading');if(Drive.init)Drive.init();await syncNow()}
